@@ -1,3 +1,9 @@
+sippts (2.0.0-0kali1) kali-dev; urgency=medium
+
+  * New upstream version 2.0.0
+
+ -- Victor Seva <linuxmaniac@torreviejawireless.org>  Tue, 10 Dec 2019 12:32:09 +0100
+
 sippts (1.2.13.1-0kali1) kali-dev; urgency=medium
 
   * Initial packaging effort.
