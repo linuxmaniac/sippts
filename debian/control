@@ -2,7 +2,8 @@ Source: sippts
 Section: comm
 Priority: optional
 Maintainer: Kali Developers <devel@kali.org>
-Uploaders: Victor Seva <linuxmaniac@torreviejawireless.org>
+Uploaders:
+ Victor Seva <linuxmaniac@torreviejawireless.org>,
 Build-Depends:
  debhelper-compat (= 12),
 Standards-Version: 4.4.1.2
@@ -12,9 +13,9 @@ Package: sippts
 Architecture: all
 Depends:
  libio-socket-timeout-perl,
- libnetaddr-ip-perl,
  libnet-address-ip-local-perl,
  libnet-pcap-perl,
+ libnetaddr-ip-perl,
  libtext-string-hexconvert-perl,
  ${misc:Depends},
  ${perl:Depends},
