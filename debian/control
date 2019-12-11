@@ -12,6 +12,7 @@ Homepage: https://github.com/Pepelux/sippts
 Package: sippts
 Architecture: all
 Depends:
+ libdbd-sqlite3-perl,
  libio-socket-timeout-perl,
  libnet-address-ip-local-perl,
  libnet-pcap-perl,
