@@ -1,3 +1,14 @@
+sippts (2.0.2-0kali1) kali-dev; urgency=medium
+
+  * add gbp filters for import-orig
+  * New upstream version 2.0.2
+  * update manpages list. wrap-and-sort -sat
+  * add libdbd-sqlite3-perl as dependence
+  * add fixes from upstream
+  * remove sipcrack.1, was renamed to sipcracker
+
+ -- Victor Seva <vseva@debian.org>  Wed, 11 Dec 2019 12:19:50 +0100
+
 sippts (2.0.1-0kali1) kali-dev; urgency=medium
 
   * New upstream version 2.0.1
