@@ -1,3 +1,10 @@
+sippts (2.0.3-0kali1) kali-dev; urgency=medium
+
+  * New upstream version 2.0.3
+  * remove already applied patches
+
+ -- Victor Seva <linuxmaniac@torreviejawireless.org>  Thu, 12 Dec 2019 10:23:17 +0100
+
 sippts (2.0.2-0kali1) kali-dev; urgency=medium
 
   * add gbp filters for import-orig
