@@ -47,6 +47,7 @@ use warnings;
 use strict;
 use IO::Socket;
 use IO::Socket::Timeout;
+use IO::Socket::SSL;
 use NetAddr::IP;
 use Getopt::Long;
 use Digest::MD5 qw(md5 md5_hex md5_base64);
@@ -56,13 +57,16 @@ my $useragent = 'pplsip';
 my $ver = 0;
 my $host = ''; # host
 my $lport = '5070';	# local port
-my $dport = '5060';	# destination port
+my $dport = '5060'; # destination port for UDP and TCP
+my $tlsport = '5061'; # destination port for TLS
 my $fromuser = '100'; # From User
 my $fromname = ''; # From Name
 my $touser = '100'; # To User
 my $toname = ''; # To Name
-my $contactdomain = '1.1.1.1'; # Contact Domain
+my $cd = '1.1.1.1'; # Contact Domain
 my $domain = ''; # SIP Domain
+my $fd = ''; # From Domain
+my $td = ''; # To Domain
 my $refer = '';	# refer number
 my $v = 0; # verbose mode
 my $user = ''; # auth user
@@ -75,7 +79,8 @@ my $nonce = '';
 my $response = '';
 my $digest = '';
 my $totag = '';
-
+my $response_contact = '';
+my $rr = '';
  
 my $to_ip = '';
 my $from_ip = '';
@@ -93,8 +98,10 @@ sub init() {
 				"tu=s" => \$touser,
 				"tn=s" => \$toname,
 				"fu=s" => \$fromuser,
-				"cd=s" => \$contactdomain,
+				"cd=s" => \$cd,
 				"d=s" => \$domain,
+				"fd=s" => \$fd,
+				"td=s" => \$td,
 				"proto=s" => \$proto,
 				"ua=s" => \$useragent,
 				"l=s" => \$lport,
@@ -109,10 +116,16 @@ sub init() {
 
 	$fromuser = $user if ($fromuser eq "" && $user ne "");
 	$proto = lc($proto);
-	$proto = "udp" if ($proto ne "tcp" && $proto ne "all");
+	$proto = "udp" if ($proto ne "tcp" && $proto ne "tls");
+
+	$dport = $tlsport if($proto eq "tls");
 
 	my @range;
 	my @hostlist;
+
+	if ($host !~ /[\,]+/ && $host !~ /\d+\.\d+\.\d+\.\d+/) {
+		$host = inet_ntoa(inet_aton($host));
+	}
 
 	if ($host =~ /\,/) {
 		@hostlist = split(/\,/, $host);
@@ -239,9 +252,21 @@ sub init() {
 		$from_ip = $to_ip if ($from_ip2 eq "");
 		my $sipdomain = $domain;
 		$sipdomain = $range[$i] if ($domain eq "");
+		my $sipcd = $cd;
+		$sipcd = $sipdomain if ($sipcd eq "");
+		my $sipfd = $fd;
+		$sipfd = $sipdomain if ($sipfd eq "");
+		my $siptd = $td;
+		$siptd = $sipdomain if ($siptd eq "");
 
 		my $callid = &generate_random_string(32, 1);
-		my $sc = new IO::Socket::INET->new(PeerPort=>$dport, LocalPort=>$lport, Proto=>'udp', PeerAddr=>$to_ip, Timeout => 10);
+		my $sc;
+
+		if ($proto ne 'tls') {
+			$sc = new IO::Socket::INET->new(PeerPort=>$dport, LocalPort=>$lport, Proto=>$proto, PeerAddr=>$to_ip, Timeout => 10);
+		} else {
+			$sc = new IO::Socket::SSL->new(PeerPort=>$dport, LocalPort=>$lport, PeerAddr=>$to_ip, Timeout => 10, SSL_verify_mode => SSL_VERIFY_NONE);
+		}
 
 		if ($sc) {
 			IO::Socket::Timeout->enable_timeouts_on($sc);
@@ -251,28 +276,33 @@ sub init() {
 
 			# first INVITE
 			my $cseq = 1;
-			my $res = send_invite($sc, $contactdomain, $from_ip, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $user, $sipdomain);
+			my $res = send_invite($sc, $sipcd, $from_ip, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $user, $sipdomain, $sipfd, $siptd);
 
 			# Authentication
 			if (($res =~ /^401/ || $res =~ /^407/) && $user ne '' && $pass ne '') { 
-				my $uri = "sip:$touser\@$domain";
+				my $uri = "sip:$touser\@$sipdomain";
 				my $a = md5_hex($user.':'.$realm.':'.$pass);
 				my $b = md5_hex('INVITE:'.$uri);
 				my $r = md5_hex($a.':'.$nonce.':'.$b);
 				$digest = "username=\"$user\", realm=\"$realm\", nonce=\"$nonce\", uri=\"$uri\", response=\"$r\", algorithm=MD5";
 
-				$res = send_ack($sc, $contactdomain, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $sipdomain);
+				$res = send_ack($sc, $sipcd, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $sipdomain, $sipfd, $siptd);
 				$cseq++;
-				$res = send_invite($sc, $contactdomain, $from_ip, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $callid, $user, $sipdomain);
+				$res = send_invite($sc, $sipcd, $from_ip, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $callid, $user, $sipdomain, $sipfd, $siptd);
 			}
+
+			$res = send_ack($sc, $sipcd, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $sipdomain, $sipfd, $siptd);
 
 			# Transfer call
 			if ($res =~ /^200/ && $refer ne "") {
 				$cseq++;
-				$res = send_ack($sc, $contactdomain, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $callid, $sipdomain);
+				$res = send_ack($sc, $sipcd, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $callid, $sipdomain, $sipfd, $siptd);
 				$cseq++;
-				$res = send_refer($sc, $contactdomain, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $user, $refer, $callid, $sipdomain);
+				$res = send_refer($sc, $sipcd, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, $digest, $user, $refer, $callid, $sipdomain, $siptd, $siptd);
 			}
+
+			$cseq++;
+			$res = send_bye($sc, $sipcd, $to_ip, $lport, $dport, $fromuser, $fromname, $touser, $toname, $cseq, "", $callid, $sipdomain, $sipfd, $siptd);
 		}
 	}
 
@@ -282,7 +312,7 @@ sub init() {
 # Send INVITE message
 sub send_invite {
 	my $sc = shift;
-	my $contactdomain = shift;
+	my $cd = shift;
 	my $from_ip = shift;
 	my $to_ip = shift;
 	my $lport = shift;
@@ -296,14 +326,16 @@ sub send_invite {
 	my $callid = shift;
 	my $user = shift;
 	my $domain = shift;
+	my $fd = shift;
+	my $td = shift;
 
 	my $branch = &generate_random_string(71, 0);
 
 	my $msg = "INVITE sip:".$touser."@".$domain." SIP/2.0\r\n";
-	$msg .= "Via: SIP/2.0/UDP $contactdomain:$lport;branch=$branch\r\n";
-	$msg .= "From: $fromname <sip:".$fromuser."@".$domain.">;tag=0c26cd11\r\n";
-	$msg .= "To: $toname <sip:".$touser."@".$domain.">\r\n";
-	$msg .= "Contact: <sip:".$fromuser."@".$contactdomain.":$lport;transport=UDP>\r\n";
+	$msg .= "Via: SIP/2.0/".uc($proto)." $cd:$lport;branch=$branch\r\n";
+	$msg .= "From: $fromname <sip:".$fromuser."@".$fd.">;tag=0c26cd11\r\n";
+	$msg .= "To: $toname <sip:".$touser."@".$td.">\r\n";
+	$msg .= "Contact: <sip:".$fromuser."@".$cd.":$lport;transport=".uc($proto).">\r\n";
 	$msg .= "Authorization: Digest $digest\r\n" if ($digest ne "");
 	$msg .= "Supported: replaces, timer, path\r\n";
 	$msg .= "P-Early-Media: Supported\r\n";
@@ -345,13 +377,11 @@ sub send_invite {
 			
 			if ($line =~ /^SIP\/2.0/ && ($response eq "" || $response =~ /^1/)) {
 				$line =~ /^SIP\/2.0\s(.+)\r\n/;
-				
 				if ($1) { $response = $1; }
 			}
 				
-			if ($line =~ /[Uu]ser\-[Aa]gent/ && $ua eq "") {
+			if ($line =~ /User\-Agent/i && $ua eq "") {
 				$line =~ /[Uu]ser\-[Aa]gent\:\s(.+)\r\n/;
-
 				$ua = $1 if ($1);
 			}
 
@@ -360,10 +390,20 @@ sub send_invite {
 				$totag = $1 if ($1);
 			}
 
-			if ($line =~ /^WWW-Authenticate:/ || $line =~ /^Proxy-Authenticate:/) {
+			if ($line =~ /^Contact/i) {
+				$line =~ /\<(.+)\>/;
+				$response_contact = $1 if ($1);
+			}
+
+			if ($line =~ /^Record\-Route/i) {
+				$line =~ /[Rr]ecord\-[Rr]oute\:\s(.+)\r\n/;
+				$rr = $1 if ($1);
+			}
+
+			if ($line =~ /^WWW-Authenticate:/i || $line =~ /^Proxy-Authenticate:/i) {
 				$line =~ /.*realm=\"([a-zA-Z0-9\.\_\-]*)\".*/;
 				$realm = $1 if ($1);
-				$line =~ /.*nonce=\"([a-zA-Z0-9\/\=\.\_\-\,]*)\".*/;
+				$line =~ /.*nonce=\"([a-zA-Z0-9\\\+\/\=\.\_\-\,]*)\".*/;
 				$nonce = $1 if ($1);
 			}
  
@@ -401,7 +441,7 @@ sub send_invite {
 # Send ACK message
 sub send_ack {
 	my $sc = shift;
-	my $contactdomain = shift;
+	my $cd = shift;
 	my $to_ip = shift;
 	my $lport = shift;
 	my $dport = shift;
@@ -413,14 +453,23 @@ sub send_ack {
 	my $digest = shift;
 	my $callid = shift;
 	my $domain = shift;
+	my $fd = shift;
+	my $td = shift;
 
 	my $branch = &generate_random_string(71, 0);
-	
-	my $msg = "ACK sip:".$touser."@".$domain." SIP/2.0\r\n";
-	$msg .= "Via: SIP/2.0/".uc($proto)." $contactdomain:$lport;branch=$branch\r\n";
-	$msg .= "From: $fromname <sip:".$fromuser."@".$domain.">;tag=0c26cd11\r\n";
-	$msg .= "To: $toname <sip:".$touser."@".$domain.">\r\n";
-	$msg .= "Contact: <sip:".$fromuser."@".$contactdomain.":$lport;transport=$proto>\r\n";
+	my $msg = '';
+
+	if ($response_contact ne '') {
+		$msg = "ACK $response_contact SIP/2.0\r\n";
+		$msg .= "Route: $rr\r\n" if ($rr ne '');
+	} else{
+		$msg = "ACK sip:".$touser."@".$domain." SIP/2.0\r\n";
+	}
+
+	$msg .= "Via: SIP/2.0/".uc($proto)." $cd:$lport;branch=$branch\r\n";
+	$msg .= "From: $fromname <sip:".$fromuser."@".$fd.">;tag=0c26cd11\r\n";
+	$msg .= "To: $toname <sip:".$touser."@".$td.">;tag=".$totag."\r\n";
+	$msg .= "Contact: <sip:".$fromuser."@".$cd.":$lport;transport=$proto>\r\n";
 	$msg .= "Authorization: Digest $digest\r\n" if ($digest ne "");
 	$msg .= "Supported: replaces, timer, path\r\n";
 	$msg .= "P-Early-Media: Supported\r\n";
@@ -476,10 +525,97 @@ sub send_ack {
 	return $response;
 }
 
+# Send BYE message
+sub send_bye {
+	my $sc = shift;
+	my $cd = shift;
+	my $to_ip = shift;
+	my $lport = shift;
+	my $dport = shift;
+	my $fromuser = shift;
+	my $fromname = shift;
+	my $touser = shift;
+	my $toname = shift;
+	my $cseq = shift;
+	my $digest = shift;
+	my $callid = shift;
+	my $domain = shift;
+	my $fd = shift;
+	my $td = shift;
+
+	my $branch = &generate_random_string(71, 0);
+	my $msg = '';
+
+	if ($response_contact ne '') {
+		$msg = "BYE $response_contact SIP/2.0\r\n";
+		$msg .= "Route: $rr\r\n" if ($rr ne '');
+	} else{
+		$msg = "BYE sip:".$touser."@".$domain." SIP/2.0\r\n";
+	}
+
+	$msg .= "Via: SIP/2.0/".uc($proto)." $cd:$lport;branch=$branch\r\n";
+	$msg .= "From: $fromname <sip:".$fromuser."@".$fd.">;tag=0c26cd11\r\n";
+	$msg .= "To: $toname <sip:".$touser."@".$td.">;tag=".$totag."\r\n";
+	$msg .= "Contact: <sip:".$fromuser."@".$cd.":$lport;transport=".uc($proto).">\r\n";
+	$msg .= "Authorization: Digest $digest\r\n" if ($digest ne "");
+	$msg .= "Supported: replaces, timer, path\r\n";
+	$msg .= "P-Early-Media: Supported\r\n";
+	$msg .= "Call-ID: $callid\r\n";
+	$msg .= "CSeq: $cseq BYE\r\n";
+	$msg .= "User-Agent: $useragent\r\n";
+	$msg .= "Max-Forwards: 70\r\n";
+	$msg .= "Allow: INVITE,ACK,CANCEL,BYE,NOTIFY,REFER,OPTIONS,INFO,SUBSCRIBE,UPDATE,PRACK,MESSAGE\r\n";
+	$msg .= "Content-Length: 0\r\n\r\n";
+
+	print $sc $msg;
+
+	if ($v eq 0) { print "[+] Sending BYE\n"; }
+	else { print "Sending:\n=======\n$msg"; }
+
+	my $data = "";
+	my $response = "";
+	my $line = "";
+
+	if ($digest ne "") {
+		LOOP: {
+			while (<$sc>) {
+				$line = $_;
+			
+				if ($line =~ /^SIP\/2.0/ && ($response eq "" || $response =~ /^1/)) {
+					$line =~ /^SIP\/2.0\s(.+)\r\n/;
+				
+					if ($1) { $response = $1; }
+				}
+				
+				$data .= $line;
+ 
+				if ($line =~ /^\r\n/) {
+					if ($log eq 1) {
+						open(my $fh, '>>', $file) or die "Could not open file '$file' $!";
+						print $fh "[+] Sending BYE\n";
+						print $fh "[-] $response\n";
+						close $fh;
+					}
+				
+					if ($v eq 0) { print "[-] $response\n"; }
+					else { print "Receiving:\n=========\n$data"; }
+
+					last LOOP if ($response !~ /^1/);
+
+					$data = "";
+					$response = "";
+				}
+			}
+		}
+	}
+	
+	return $response;
+}
+
 # Send REFER message
 sub send_refer {
 	my $sc = shift;
-	my $contactdomain = shift;
+	my $cd = shift;
 	my $to_ip = shift;
 	my $lport = shift;
 	my $dport = shift;
@@ -494,14 +630,16 @@ sub send_refer {
 	my $referto = shift;
 	my $domain = shift;
 	my $proto = shift;
+	my $fd = shift;
+	my $td = shift;
 
 	my $branch = &generate_random_string(71, 0);
 
 	my $msg = "REFER sip:".$touser."@".$domain." SIP/2.0\r\n";
-	$msg .= "Via: SIP/2.0/".uc($proto)." $contactdomain:$lport;branch=$branch\r\n";
-	$msg .= "From: $fromname <sip:".$fromuser."@".$domain.">;tag=0c26cd11\r\n";
-	$msg .= "To: $toname <sip:".$touser."@".$domain.">\r\n";
-	$msg .= "Contact: <sip:".$fromuser."@".$contactdomain.":$lport;transport=$proto>\r\n";
+	$msg .= "Via: SIP/2.0/".uc($proto)." $cd:$lport;branch=$branch\r\n";
+	$msg .= "From: $fromname <sip:".$fromuser."@".$fd.">;tag=0c26cd11\r\n";
+	$msg .= "To: $toname <sip:".$touser."@".$td.">\r\n";
+	$msg .= "Contact: <sip:".$fromuser."@".$cd.":$lport;transport=".uc($proto).">\r\n";
 	$msg .= "Authorization: Digest $digest\r\n" if ($digest ne "");
 	$msg .= "Supported: replaces, timer, path\r\n";
 	$msg .= "P-Early-Media: Supported\r\n";
@@ -622,12 +760,14 @@ Usage: perl $0 -h <host> -tu <dst_number> [options]
 -fn  <string>    = From Name
 -tn  <string>    = To Name
 -cd <string>     = Contact Domain (by default 1.1.1.1)
+-fd  <string>    = From Domain (by default: destination IP address)
+-td  <string>    = To Domain (by default: destination IP address)
 -d  <string>     = Domain (by default: destination IP address)
 -l  <integer>    = Local port (default: 5070)
 -r  <integer>    = Remote port (default: 5060)
 -t  <integer>    = Transfer call to another number
 -ua <string>     = Customize the UserAgent
--proto <string>  = Protocol (udp, tcp or all (both of them) - By default: UDP)
+-proto <string>  = Protocol (udp, tcp or tls - By default: udp)
 -v               = Verbose (trace information)
 -log             = Save results into sipinvite.log file
 -version         = Show version and search for updates
