@@ -1,3 +1,9 @@
+sippts (2.0.5-0kali1) kali-dev; urgency=medium
+
+  * New upstream version 2.0.5
+
+ -- Victor Seva <vseva@debian.org>  Fri, 14 Jan 2022 10:55:46 +0100
+
 sippts (2.0.4-0kali1) kali-dev; urgency=medium
 
   * New upstream version 2.0.4
