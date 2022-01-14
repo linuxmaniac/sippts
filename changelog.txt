@@ -1,3 +1,9 @@
+v2.0.5 (Jan/2022)
+- New script (sipflood.pl) to send unlimited messages to the target
+- sipcracker.pl: if all password are found, the script ends
+- sipdigestleak.pl: added cnonce, nc and qop params when export files with sipdump format
+- sipscan.pl: bug fixes
+
 v2.0.4 (Aug/2020)
 - Hostname to IP address resolution
 - TLS support
@@ -22,8 +28,8 @@ v2.0.0 (Dec/2019)
 - Bug fixes
 
 v1.2.13 (Oct/2019)
-- New param (-version) to show current version and search for new updates
-- sipscan.pl: New param (-web) to search for a control panel optionally
+- New param (-version) to show current version and check for new updates
+- sipscan.pl: New optional param (-web) to check for a control panel
 - sipinvite.pl: New param (-log) to save data into a log file
 
 v1.2.12 (Oct/2019)
